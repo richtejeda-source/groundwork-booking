@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<!-- The link's secret is in the address after "#": never send it to other sites. -->
+<meta name="referrer" content="no-referrer">
+<title>Pick a time for your site visit</title>
+<!-- What iPhones show on the link card in the text message (the link itself sits on its own line, last). -->
+<meta property="og:title" content="Pick a time for your site visit">
+<meta property="og:description" content="Tap to choose one of the offered times. It's booked right away.">
+<style>
+  :root {
+    --brand: #2E7D32;
+    --bg: #f6f7f5;
+    --card: #ffffff;
+    --text: #1d211c;
+    --muted: #5d655b;
+    --line: #dde2da;
+    --error: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121411; --card: #1c1f1b; --text: #eef1ec; --muted: #a6ada3; --line: #343a32; --error: #f2b8b5; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 520px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { margin-bottom: 20px; }
+  .company { font-weight: 700; color: var(--brand); font-size: 15px; letter-spacing: .02em; }
+  h1 { font-size: 26px; line-height: 1.2; margin: 6px 0 4px; }
+  .sub { color: var(--muted); margin: 0; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-top: 16px; }
+  .day { font-weight: 600; margin: 14px 0 8px; }
+  .day:first-child { margin-top: 0; }
+  .slot {
+    display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+    padding: 14px 16px; margin-bottom: 10px; border-radius: 12px; cursor: pointer;
+    border: 2px solid var(--line); background: transparent; color: var(--text); font: inherit;
+  }
+  .slot .dot { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line); flex: none; }
+  .slot[aria-checked="true"] { border-color: var(--brand); }
+  .slot[aria-checked="true"] .dot { border: 6px solid var(--brand); }
+  label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  textarea {
+    width: 100%; min-height: 72px; padding: 10px 12px; border-radius: 10px; resize: vertical;
+    border: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit;
+  }
+  .primary {
+    width: 100%; margin-top: 16px; padding: 15px; border: 0; border-radius: 12px; cursor: pointer;
+    background: var(--brand); color: #fff; font: inherit; font-weight: 600;
+  }
+  .primary:disabled { opacity: .45; cursor: default; }
+  .link { display: block; margin: 18px auto 0; background: none; border: 0; color: var(--brand); font: inherit; cursor: pointer; text-decoration: underline; }
+  .note { color: var(--muted); font-size: 14px; margin-top: 10px; }
+  .error { color: var(--error); margin-top: 12px; }
+  .big { font-size: 22px; font-weight: 700; margin: 4px 0 8px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="company" id="company"></div>
+    <h1 id="title">Site visit</h1>
+    <p class="sub" id="sub">Loading…</p>
+  </header>
+  <div id="content"></div>
+</main>
+<script>
+// Groundwork booking page. One page for every company: the link's secret (after "#t=") decides which visit.
+// It only talks to three database functions (migration 0012) with the public "publishable" key — that key
+// can't read any table; the functions return just what this page shows.
+const SUPABASE_URL = "https://lafbcmijjhxefzcowbrp.supabase.co";
+const PUBLISHABLE_KEY = "sb_publishable_b527xyrYCMbwDuIq2tFg1Q_CaxPmULO";
+
+const token = new URLSearchParams(location.hash.slice(1)).get("t") || "";
+// A different link opened in the same tab: start over with it.
+window.addEventListener("hashchange", () => location.reload());
+const $ = (id) => document.getElementById(id);
+let page = null;
+let chosen = null;
+let busy = false;
+
+async function call(fn, args) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: PUBLISHABLE_KEY },
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+function el(tag, attrs = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v);
+  }
+  for (const c of children) e.append(c);
+  return e;
+}
+
+const fmt = (opts) => new Intl.DateTimeFormat("en-US", { timeZone: page.timeZone, ...opts });
+const dayLabel = (iso) => fmt({ weekday: "long", month: "long", day: "numeric" }).format(new Date(iso));
+const timeLabel = (iso) => fmt({ hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+const fullLabel = (iso) => `${dayLabel(iso)} at ${timeLabel(iso)}`;
+
+/// "Times are Eastern Time" only when the customer's device is somewhere else.
+function zoneNote() {
+  const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (here === page.timeZone) return null;
+  const name = new Intl.DateTimeFormat("en-US", { timeZone: page.timeZone, timeZoneName: "long" })
+    .formatToParts(new Date()).find((p) => p.type === "timeZoneName")?.value;
+  return el("p", { class: "note" }, `Times are ${name || page.timeZone}.`);
+}
+
+function header() {
+  $("company").textContent = page.companyName || "";
+  $("title").textContent = page.jobTitle ? `Site visit: ${page.jobTitle}` : "Site visit";
+  if (page.brandColor && /^#[0-9a-fA-F]{6}$/.test(page.brandColor)) {
+    document.documentElement.style.setProperty("--brand", page.brandColor);
+  }
+  document.title = page.companyName ? `Site visit · ${page.companyName}` : "Site visit";
+}
+
+function render(extraError) {
+  const content = $("content");
+  content.replaceChildren();
+  const rep = page.repName || "We";
+  if (page.status === "notFound") {
+    $("sub").textContent = "This link isn't valid anymore.";
+    content.append(el("div", { class: "card" }, "Please reply to the text or email you received and we'll find a time with you."));
+    return;
+  }
+  header();
+  if (page.status === "booked") {
+    $("sub").textContent = "You're booked.";
+    content.append(el("div", { class: "card" },
+      el("div", { class: "big" }, fullLabel(page.bookedAt)),
+      `${page.repName ? page.repName + " will" : "We'll"} walk the property with you, take measurements and photos, and talk through what you'd like. You'll get a confirmation shortly.`,
+      zoneNote() || ""));
+    return;
+  }
+  if (page.status === "callbackRequested") {
+    $("sub").textContent = "Thank you.";
+    content.append(el("div", { class: "card" }, `${page.repName || "We"} will call you to find a time that works.`));
+    return;
+  }
+  if (page.status === "expired") {
+    $("sub").textContent = "These times aren't available anymore.";
+    content.append(el("div", { class: "card" }, "Tap below and we'll call you to find a time that works.", callbackForm()));
+    return;
+  }
+
+  // Open: pick one of the offered times.
+  $("sub").textContent = `${page.repName ? page.repName + " has" : "We have"} these times open. Pick the one that works best and it's booked.`;
+  const card = el("div", { class: "card", role: "radiogroup", "aria-label": "Visit times" });
+  let lastDay = null;
+  for (const iso of page.options) {
+    const d = dayLabel(iso);
+    if (d !== lastDay) { card.append(el("div", { class: "day" }, d)); lastDay = d; }
+    card.append(el("button", {
+      class: "slot", role: "radio", "aria-checked": String(chosen === iso), type: "button",
+      onclick: () => { chosen = iso; render(); },
+    }, el("span", { class: "dot" }), timeLabel(iso)));
+  }
+  const z = zoneNote();
+  if (z) card.append(z);
+  const note = el("textarea", { id: "note", placeholder: "Gate code, best entrance, anything we should know (optional)", maxlength: "500" });
+  note.value = sessionNote;
+  note.addEventListener("input", () => { sessionNote = note.value; });
+  card.append(el("label", { for: "note" }, "Note for us"), note);
+  const book = el("button", { class: "primary", type: "button", onclick: bookIt }, chosen ? `Book ${fullLabel(chosen)}` : "Pick a time");
+  book.disabled = !chosen || busy;
+  card.append(book);
+  if (extraError) card.append(el("p", { class: "error" }, extraError));
+  content.append(card);
+  content.append(el("button", { class: "link", type: "button", onclick: () => { page.status = "askCall"; renderCallback(); } },
+    "None of these work — please call me"));
+}
+
+let sessionNote = "";
+
+function callbackForm() {
+  const wrap = el("div");
+  const note = el("textarea", { id: "cbnote", placeholder: "Best time to call (optional)", maxlength: "500" });
+  wrap.append(el("label", { for: "cbnote" }, "Note for us"), note);
+  const btn = el("button", { class: "primary", type: "button", onclick: async () => {
+    btn.disabled = true;
+    try { page = await call("visit_booking_callback", { p_token: token, p_note: note.value }); render(); }
+    catch { btn.disabled = false; wrap.append(el("p", { class: "error" }, "That didn't go through. Check your connection and try again.")); }
+  } }, "Please call me");
+  wrap.append(btn);
+  return wrap;
+}
+
+function renderCallback() {
+  $("sub").textContent = "No problem.";
+  $("content").replaceChildren(el("div", { class: "card" }, "Tap below and we'll call you to find a time that works.", callbackForm()),
+    el("button", { class: "link", type: "button", onclick: () => { page.status = "open"; render(); } }, "Back to the times"));
+}
+
+async function bookIt() {
+  if (!chosen || busy) return;
+  busy = true; render();
+  try {
+    const result = await call("visit_booking_book", { p_token: token, p_at: chosen, p_note: sessionNote });
+    busy = false;
+    page = result;
+    if (result.taken) { chosen = null; render("Sorry, that time was just taken. Please pick another."); }
+    else render();
+  } catch {
+    busy = false;
+    render("That didn't go through. Check your connection and try again.");
+  }
+}
+
+(async () => {
+  if (!/^[A-Za-z0-9_-]{32,64}$/.test(token)) { page = { status: "notFound" }; render(); return; }
+  try { page = await call("visit_booking_get", { p_token: token }); render(); }
+  catch { $("sub").textContent = "We couldn't load your times. Check your connection and refresh the page."; }
+})();
+</script>
+</body>
+</html>
