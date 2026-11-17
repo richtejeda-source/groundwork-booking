@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Your Inspection Report</title>
+  <meta name="description" content="Photos of what we found at your property and the work we recommend." />
+  <meta property="og:title" content="Your Inspection Report" />
+  <meta property="og:description" content="Photos of what we found at your property and the work we recommend. Tap to review." />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://richtejeda-source.github.io/groundwork-booking/app/icon-512.png" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="robots" content="noindex" />
+  <style>body{margin:0;font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;color:#555}</style>
+</head>
+<body>
+  <p>Opening your report…</p>
+  <script>
+    // The link's secret is after the # (never sent to any server); hand it to the app's report page.
+    location.replace('./#/r/' + location.hash.slice(1))
+  </script>
+</body>
+</html>
